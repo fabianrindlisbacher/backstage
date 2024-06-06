@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { Entity, CompoundEntityRef } from '@backstage/catalog-model';
+import { Entity } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
 import { assertError } from '@backstage/errors';
 import {
@@ -22,16 +22,12 @@ import {
   Storage,
   StorageOptions,
 } from '@google-cloud/storage';
-import express from 'express';
-import JSON5 from 'json5';
 import path from 'path';
 import { Readable } from 'stream';
 import { Logger } from 'winston';
 import {
   getFileTreeRecursively,
-  getHeadersForFileExtension,
   lowerCaseEntityTriplet,
-  lowerCaseEntityTripletInStoragePath,
   bulkStorageOperation,
   getCloudPathForLocalPath,
   getStaleFiles,
@@ -43,7 +39,6 @@ import {
   PublishRequest,
   PublishResponse,
   ReadinessResponse,
-  TechDocsMetadata,
 } from './types';
 
 export class GoogleGCSPublish implements PublisherBase {
@@ -250,79 +245,6 @@ export class GoogleGCSPublish implements PublisherBase {
     }
 
     return { objects };
-  }
-
-  fetchTechDocsMetadata(
-    entityName: CompoundEntityRef,
-  ): Promise<TechDocsMetadata> {
-    return new Promise((resolve, reject) => {
-      const entityTriplet = `${entityName.namespace}/${entityName.kind}/${entityName.name}`;
-      const entityDir = this.legacyPathCasing
-        ? entityTriplet
-        : lowerCaseEntityTriplet(entityTriplet);
-
-      const entityRootDir = path.posix.join(this.bucketRootPath, entityDir);
-
-      const fileStreamChunks: Array<any> = [];
-      this.storageClient
-        .bucket(this.bucketName)
-        .file(`${entityRootDir}/techdocs_metadata.json`)
-        .createReadStream()
-        .on('error', err => {
-          this.logger.error(err.message);
-          reject(err);
-        })
-        .on('data', chunk => {
-          fileStreamChunks.push(chunk);
-        })
-        .on('end', () => {
-          const techdocsMetadataJson =
-            Buffer.concat(fileStreamChunks).toString('utf-8');
-          resolve(JSON5.parse(techdocsMetadataJson));
-        });
-    });
-  }
-
-  /**
-   * Express route middleware to serve static files on a route in techdocs-backend.
-   */
-  docsRouter(): express.Handler {
-    return (req, res) => {
-      const decodedUri = decodeURI(req.path.replace(/^\//, ''));
-
-      // filePath example - /default/component/documented-component/index.html
-      const filePathNoRoot = this.legacyPathCasing
-        ? decodedUri
-        : lowerCaseEntityTripletInStoragePath(decodedUri);
-
-      // Prepend the root path to the relative file path
-      const filePath = path.posix.join(this.bucketRootPath, filePathNoRoot);
-
-      // Files with different extensions (CSS, HTML) need to be served with different headers
-      const fileExtension = path.extname(filePath);
-      const responseHeaders = getHeadersForFileExtension(fileExtension);
-
-      // Pipe file chunks directly from storage to client.
-      this.storageClient
-        .bucket(this.bucketName)
-        .file(filePath)
-        .createReadStream()
-        .on('pipe', () => {
-          res.writeHead(200, responseHeaders);
-        })
-        .on('error', err => {
-          this.logger.warn(
-            `TechDocs Google GCS router failed to serve content from bucket ${this.bucketName} at path ${filePath}: ${err.message}`,
-          );
-          // Send a 404 with a meaningful message if possible.
-          if (!res.headersSent) {
-            res.status(404).send('File Not Found');
-          } else {
-            res.destroy();
-          }
-        })
-        .pipe(res);
-    };
   }
 
   /**

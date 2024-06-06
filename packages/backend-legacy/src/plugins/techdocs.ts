@@ -20,6 +20,7 @@ import {
   Generators,
   Preparers,
   Publisher,
+  Reader,
 } from '@backstage/plugin-techdocs-backend';
 import Docker from 'dockerode';
 import { Router } from 'express';
@@ -55,10 +56,18 @@ export default async function createPlugin(
   // checks if the publisher is working and logs the result
   await publisher.getReadiness();
 
+  const reader = await Reader.fromConfig(env.config, {
+    logger: env.logger,
+    discovery: env.discovery,
+  });
+
+  await reader.getReadiness();
+
   return await createRouter({
     preparers,
     generators,
     publisher,
+    reader,
     logger: env.logger,
     config: env.config,
     discovery: env.discovery,

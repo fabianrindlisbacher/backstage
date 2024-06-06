@@ -13,20 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { Entity, CompoundEntityRef } from '@backstage/catalog-model';
+import { Entity } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
-import express from 'express';
 import fs from 'fs-extra';
-import JSON5 from 'json5';
 import createLimiter from 'p-limit';
 import path from 'path';
 import { SwiftClient } from '@trendyol-js/openstack-swift-sdk';
 import { NotFound } from '@trendyol-js/openstack-swift-sdk/lib/types';
-import { Stream, Readable } from 'stream';
+import { Readable } from 'stream';
 import { Logger } from 'winston';
 import {
   getFileTreeRecursively,
-  getHeadersForFileExtension,
   lowerCaseEntityTripletInStoragePath,
 } from './helpers';
 import {
@@ -34,22 +31,8 @@ import {
   PublishRequest,
   PublishResponse,
   ReadinessResponse,
-  TechDocsMetadata,
 } from './types';
-import { assertError, ForwardedError } from '@backstage/errors';
-
-const streamToBuffer = (stream: Stream | Readable): Promise<Buffer> => {
-  return new Promise((resolve, reject) => {
-    try {
-      const chunks: any[] = [];
-      stream.on('data', chunk => chunks.push(chunk));
-      stream.on('error', reject);
-      stream.on('end', () => resolve(Buffer.concat(chunks)));
-    } catch (e) {
-      throw new ForwardedError('Unable to parse the response data', e);
-    }
-  });
-};
+import { assertError } from '@backstage/errors';
 
 const bufferToStream = (buffer: Buffer): Readable => {
   const stream = new Readable();
@@ -191,91 +174,6 @@ export class OpenStackSwiftPublish implements PublisherBase {
       this.logger.error(errorMessage);
       throw new Error(errorMessage);
     }
-  }
-
-  async fetchTechDocsMetadata(
-    entityName: CompoundEntityRef,
-  ): Promise<TechDocsMetadata> {
-    return await new Promise<TechDocsMetadata>(async (resolve, reject) => {
-      const entityRootDir = `${entityName.namespace}/${entityName.kind}/${entityName.name}`;
-
-      const downloadResponse = await this.storageClient.download(
-        this.containerName,
-        `${entityRootDir}/techdocs_metadata.json`,
-      );
-
-      if (!(downloadResponse instanceof NotFound)) {
-        const stream = downloadResponse.data;
-        try {
-          const techdocsMetadataJson = await streamToBuffer(stream);
-          if (!techdocsMetadataJson) {
-            throw new Error(
-              `Unable to parse the techdocs metadata file ${entityRootDir}/techdocs_metadata.json.`,
-            );
-          }
-
-          const techdocsMetadata = JSON5.parse(
-            techdocsMetadataJson.toString('utf-8'),
-          );
-
-          resolve(techdocsMetadata);
-        } catch (err) {
-          assertError(err);
-          this.logger.error(err.message);
-          reject(new Error(err.message));
-        }
-      } else {
-        reject({
-          message: `TechDocs metadata fetch failed, The file /rootDir/${entityRootDir}/techdocs_metadata.json does not exist !`,
-        });
-      }
-    });
-  }
-
-  /**
-   * Express route middleware to serve static files on a route in techdocs-backend.
-   */
-  docsRouter(): express.Handler {
-    return async (req, res) => {
-      // Decode and trim the leading forward slash
-      // filePath example - /default/Component/documented-component/index.html
-      const filePath = decodeURI(req.path.replace(/^\//, ''));
-
-      // Files with different extensions (CSS, HTML) need to be served with different headers
-      const fileExtension = path.extname(filePath);
-      const responseHeaders = getHeadersForFileExtension(fileExtension);
-
-      const downloadResponse = await this.storageClient.download(
-        this.containerName,
-        filePath,
-      );
-
-      if (!(downloadResponse instanceof NotFound)) {
-        const stream = downloadResponse.data;
-
-        try {
-          // Inject response headers
-          for (const [headerKey, headerValue] of Object.entries(
-            responseHeaders,
-          )) {
-            res.setHeader(headerKey, headerValue);
-          }
-
-          res.send(await streamToBuffer(stream));
-        } catch (err) {
-          assertError(err);
-          this.logger.warn(
-            `TechDocs OpenStack swift router failed to serve content from container ${this.containerName} at path ${filePath}: ${err.message}`,
-          );
-          res.status(404).send('File Not Found');
-        }
-      } else {
-        this.logger.warn(
-          `TechDocs OpenStack swift router failed to serve content from container ${this.containerName} at path ${filePath}: Not found`,
-        );
-        res.status(404).send('File Not Found');
-      }
-    };
   }
 
   /**

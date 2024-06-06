@@ -6,6 +6,7 @@ metadata:
   description: A Service with TechDocs documentation
   annotations:
     backstage.io/techdocs-ref: dir:.
+    backstage.io/techdocs-awsS3-bucket: techdocs-bucket
 spec:
   type: service
   lifecycle: experimental

@@ -28,6 +28,7 @@ import {
   getLocationForEntity,
   PreparerBuilder,
   PublisherBase,
+  ReaderBase,
 } from '@backstage/plugin-techdocs-node';
 import express, { Response } from 'express';
 import Router from 'express-promise-router';
@@ -39,6 +40,7 @@ import { CachedEntityLoader } from './CachedEntityLoader';
 import { DefaultDocsBuildStrategy } from './DefaultDocsBuildStrategy';
 import * as winston from 'winston';
 import { AuthService, HttpAuthService } from '@backstage/backend-plugin-api';
+import path from 'path';
 
 /**
  * Required dependencies for running TechDocs in the "out-of-the-box"
@@ -49,12 +51,13 @@ import { AuthService, HttpAuthService } from '@backstage/backend-plugin-api';
 export type OutOfTheBoxDeploymentOptions = {
   preparers: PreparerBuilder;
   generators: GeneratorBuilder;
-  publisher: PublisherBase;
+  reader: ReaderBase;
   logger: winston.Logger;
   discovery: PluginEndpointDiscovery;
   database?: Knex; // TODO: Make database required when we're implementing database stuff.
   config: Config;
   cache: PluginCacheManager;
+  publisher: PublisherBase;
   docsBuildStrategy?: DocsBuildStrategy;
   buildLogTransport?: winston.transport;
   catalogClient?: CatalogClient;
@@ -64,16 +67,18 @@ export type OutOfTheBoxDeploymentOptions = {
 
 /**
  * Required dependencies for running TechDocs in the "recommended" deployment
- * configuration (prepare/generate handled externally in CI/CD).
+ * configuration (prepare/generate/publish handled externally in CI/CD).
  *
  * @public
  */
 export type RecommendedDeploymentOptions = {
-  publisher: PublisherBase;
+  reader: ReaderBase;
   logger: winston.Logger;
   discovery: PluginEndpointDiscovery;
   config: Config;
   cache: PluginCacheManager;
+  // TODO check if this really has to be optional or can be left
+  publisher: PublisherBase;
   docsBuildStrategy?: DocsBuildStrategy;
   buildLogTransport?: winston.transport;
   catalogClient?: CatalogClient;
@@ -111,7 +116,7 @@ export async function createRouter(
   options: RouterOptions,
 ): Promise<express.Router> {
   const router = Router();
-  const { publisher, config, logger, discovery } = options;
+  const { reader, publisher, config, logger, discovery } = options;
 
   const { auth, httpAuth } = createLegacyAuthAdapters(options);
 
@@ -167,9 +172,7 @@ export async function createRouter(
     }
 
     try {
-      const techdocsMetadata = await publisher.fetchTechDocsMetadata(
-        entityName,
-      );
+      const techdocsMetadata = await reader.fetchTechDocsMetadata(entity);
 
       res.json(techdocsMetadata);
     } catch (err) {
@@ -320,7 +323,44 @@ export async function createRouter(
   }
 
   // Route middleware which serves files from the storage set in the publisher.
-  router.use('/static/docs', publisher.docsRouter());
+  router.use('/static/docs', async (req, res) => {
+    const decodedUri = decodeURI(req.path.replace(/^\//, ''));
+
+    const lowerCaseEntityTriplet = (
+      posixPath: string,
+    ): {
+      kind: string;
+      namespace: string;
+      name: string;
+    } => {
+      const [namespace, kind, name] = posixPath.split(path.posix.sep);
+      const lowerNamespace = namespace.toLowerCase();
+      const lowerKind = kind.toLowerCase();
+      const lowerName = name.toLowerCase();
+      return { kind: lowerKind, namespace: lowerNamespace, name: lowerName };
+    };
+
+    const entityName = lowerCaseEntityTriplet(decodedUri);
+
+    const credentials = await httpAuth.credentials(req, {
+      allowLimitedAccess: true,
+    });
+
+    const { token } = await auth.getPluginRequestToken({
+      onBehalfOf: credentials,
+      targetPluginId: 'catalog',
+    });
+
+    const entity = await entityLoader.load(entityName, token);
+
+    if (!entity) {
+      throw new NotFoundError(
+        `Entity not found for ${stringifyEntityRef(entityName)}`,
+      );
+    }
+
+    reader.proxyDocs(decodedUri, res, entity);
+  });
 
   return router;
 }

@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { Entity, CompoundEntityRef } from '@backstage/catalog-model';
+import { Entity } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
-import { assertError, ForwardedError } from '@backstage/errors';
+import { assertError } from '@backstage/errors';
 import {
   AwsCredentialsManager,
   DefaultAwsCredentialsManager,
 } from '@backstage/integration-aws-node';
 import {
-  GetObjectCommand,
   CopyObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
@@ -36,18 +35,14 @@ import { NodeHttpHandler } from '@smithy/node-http-handler';
 import { Upload } from '@aws-sdk/lib-storage';
 import { AwsCredentialIdentityProvider } from '@aws-sdk/types';
 import { HttpsProxyAgent } from 'hpagent';
-import express from 'express';
 import fs from 'fs-extra';
-import JSON5 from 'json5';
 import createLimiter from 'p-limit';
 import path from 'path';
-import { Readable } from 'stream';
 import { Logger } from 'winston';
 import {
   bulkStorageOperation,
   getCloudPathForLocalPath,
   getFileTreeRecursively,
-  getHeadersForFileExtension,
   getStaleFiles,
   lowerCaseEntityTriplet,
   lowerCaseEntityTripletInStoragePath,
@@ -58,23 +53,7 @@ import {
   PublishRequest,
   PublishResponse,
   ReadinessResponse,
-  TechDocsMetadata,
 } from './types';
-
-const streamToBuffer = (stream: Readable): Promise<Buffer> => {
-  return new Promise((resolve, reject) => {
-    try {
-      const chunks: any[] = [];
-      stream.on('data', chunk => chunks.push(chunk));
-      stream.on('error', (e: Error) =>
-        reject(new ForwardedError('Unable to read stream', e)),
-      );
-      stream.on('end', () => resolve(Buffer.concat(chunks)));
-    } catch (e) {
-      throw new ForwardedError('Unable to parse the response data', e);
-    }
-  });
-};
 
 export class AwsS3Publish implements PublisherBase {
   private readonly storageClient: S3Client;
@@ -385,93 +364,6 @@ export class AwsS3Publish implements PublisherBase {
       this.logger.error(errorMessage);
     }
     return { objects };
-  }
-
-  async fetchTechDocsMetadata(
-    entityName: CompoundEntityRef,
-  ): Promise<TechDocsMetadata> {
-    try {
-      return await new Promise<TechDocsMetadata>(async (resolve, reject) => {
-        const entityTriplet = `${entityName.namespace}/${entityName.kind}/${entityName.name}`;
-        const entityDir = this.legacyPathCasing
-          ? entityTriplet
-          : lowerCaseEntityTriplet(entityTriplet);
-
-        const entityRootDir = path.posix.join(this.bucketRootPath, entityDir);
-
-        try {
-          const resp = await this.storageClient.send(
-            new GetObjectCommand({
-              Bucket: this.bucketName,
-              Key: `${entityRootDir}/techdocs_metadata.json`,
-            }),
-          );
-
-          const techdocsMetadataJson = await streamToBuffer(
-            resp.Body as Readable,
-          );
-          if (!techdocsMetadataJson) {
-            throw new Error(
-              `Unable to parse the techdocs metadata file ${entityRootDir}/techdocs_metadata.json.`,
-            );
-          }
-
-          const techdocsMetadata = JSON5.parse(
-            techdocsMetadataJson.toString('utf-8'),
-          );
-
-          resolve(techdocsMetadata);
-        } catch (err) {
-          assertError(err);
-          this.logger.error(err.message);
-          reject(new Error(err.message));
-        }
-      });
-    } catch (e) {
-      throw new ForwardedError('TechDocs metadata fetch failed', e);
-    }
-  }
-
-  /**
-   * Express route middleware to serve static files on a route in techdocs-backend.
-   */
-  docsRouter(): express.Handler {
-    return async (req, res) => {
-      const decodedUri = decodeURI(req.path.replace(/^\//, ''));
-
-      // filePath example - /default/component/documented-component/index.html
-      const filePathNoRoot = this.legacyPathCasing
-        ? decodedUri
-        : lowerCaseEntityTripletInStoragePath(decodedUri);
-
-      // Prepend the root path to the relative file path
-      const filePath = path.posix.join(this.bucketRootPath, filePathNoRoot);
-
-      // Files with different extensions (CSS, HTML) need to be served with different headers
-      const fileExtension = path.extname(filePath);
-      const responseHeaders = getHeadersForFileExtension(fileExtension);
-
-      try {
-        const resp = await this.storageClient.send(
-          new GetObjectCommand({ Bucket: this.bucketName, Key: filePath }),
-        );
-
-        // Inject response headers
-        for (const [headerKey, headerValue] of Object.entries(
-          responseHeaders,
-        )) {
-          res.setHeader(headerKey, headerValue);
-        }
-
-        res.send(await streamToBuffer(resp.Body as Readable));
-      } catch (err) {
-        assertError(err);
-        this.logger.warn(
-          `TechDocs S3 router failed to serve static files from bucket ${this.bucketName} at key ${filePath}: ${err.message}`,
-        );
-        res.status(404).send('File Not Found');
-      }
-    };
   }
 
   /**

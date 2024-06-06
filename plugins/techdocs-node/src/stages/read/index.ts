@@ -13,13 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-export { Publisher } from './publish';
+export { Reader } from './read';
 export type {
-  PublisherBase,
-  PublisherType,
-  PublisherFactory,
-  PublishRequest,
-  PublishResponse,
-  MigrateRequest,
+  ReaderBase,
+  ReaderType,
+  ReaderFactory,
   ReadinessResponse,
+  TechDocsMetadata,
 } from './types';

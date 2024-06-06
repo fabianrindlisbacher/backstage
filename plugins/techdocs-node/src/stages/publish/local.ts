@@ -18,13 +18,8 @@ import {
   resolvePackagePath,
   resolveSafeChildPath,
 } from '@backstage/backend-plugin-api';
-import {
-  Entity,
-  CompoundEntityRef,
-  stringifyEntityRef,
-} from '@backstage/catalog-model';
+import { Entity, stringifyEntityRef } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
-import express from 'express';
 import fs from 'fs-extra';
 import os from 'os';
 import createLimiter from 'p-limit';
@@ -35,11 +30,9 @@ import {
   PublishRequest,
   PublishResponse,
   ReadinessResponse,
-  TechDocsMetadata,
 } from './types';
 import {
   getFileTreeRecursively,
-  getHeadersForFileExtension,
   lowerCaseEntityTripletInStoragePath,
 } from './helpers';
 import { ForwardedError } from '@backstage/errors';
@@ -159,88 +152,6 @@ export class LocalPublish implements PublisherBase {
       )}`,
       objects: publishedFilePaths,
     };
-  }
-
-  async fetchTechDocsMetadata(
-    entityName: CompoundEntityRef,
-  ): Promise<TechDocsMetadata> {
-    let metadataPath: string;
-
-    try {
-      metadataPath = this.staticEntityPathJoin(
-        entityName.namespace,
-        entityName.kind,
-        entityName.name,
-        'techdocs_metadata.json',
-      );
-    } catch (err) {
-      throw new ForwardedError(
-        `Unexpected entity when fetching metadata: ${stringifyEntityRef(
-          entityName,
-        )}`,
-        err,
-      );
-    }
-
-    try {
-      return await fs.readJson(metadataPath);
-    } catch (err) {
-      throw new ForwardedError(
-        `Unable to read techdocs_metadata.json at ${metadataPath}. Error: ${err}`,
-        err,
-      );
-    }
-  }
-
-  docsRouter(): express.Handler {
-    const router = express.Router();
-
-    // Redirect middleware ensuring that requests to case-sensitive entity
-    // triplet paths are always sent to lower-case versions.
-    router.use((req, res, next) => {
-      // If legacy path casing is on, let the request immediately continue.
-      if (this.legacyPathCasing) {
-        return next();
-      }
-
-      // Generate a lower-case entity triplet path.
-      const [_, namespace, kind, name, ...rest] = req.path.split('/');
-
-      // Ignore non-triplet objects.
-      if (!namespace || !kind || !name) {
-        return next();
-      }
-
-      const newPath = [
-        _,
-        namespace.toLowerCase(),
-        kind.toLowerCase(),
-        name.toLowerCase(),
-        ...rest,
-      ].join('/');
-
-      // If there was no change, then let express.static() handle the request.
-      if (newPath === req.path) {
-        return next();
-      }
-
-      // Otherwise, redirect to the new path.
-      return res.redirect(301, req.baseUrl + newPath);
-    });
-    router.use(
-      express.static(this.staticDocsDir, {
-        // Handle content-type header the same as all other publishers.
-        setHeaders: (res, filePath) => {
-          const fileExtension = path.extname(filePath);
-          const headers = getHeadersForFileExtension(fileExtension);
-          for (const [header, value] of Object.entries(headers)) {
-            res.setHeader(header, value);
-          }
-        },
-      }),
-    );
-
-    return router;
   }
 
   async hasDocsBeenGenerated(entity: Entity): Promise<boolean> {

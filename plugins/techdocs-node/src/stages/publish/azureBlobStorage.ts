@@ -19,19 +19,16 @@ import {
   ContainerClient,
   StorageSharedKeyCredential,
 } from '@azure/storage-blob';
-import { Entity, CompoundEntityRef } from '@backstage/catalog-model';
+import { Entity } from '@backstage/catalog-model';
 import { Config } from '@backstage/config';
-import { assertError, ForwardedError } from '@backstage/errors';
-import express from 'express';
-import JSON5 from 'json5';
+import { assertError } from '@backstage/errors';
 import limiterFactory from 'p-limit';
-import { default as path, default as platformPath } from 'path';
+import { default as path } from 'path';
 import { Logger } from 'winston';
 import {
   bulkStorageOperation,
   getCloudPathForLocalPath,
   getFileTreeRecursively,
-  getHeadersForFileExtension,
   lowerCaseEntityTriplet,
   getStaleFiles,
   lowerCaseEntityTripletInStoragePath,
@@ -41,7 +38,6 @@ import {
   PublishRequest,
   PublishResponse,
   ReadinessResponse,
-  TechDocsMetadata,
 } from './types';
 
 // The number of batches that may be ongoing at the same time.
@@ -284,95 +280,6 @@ export class AzureBlobStoragePublish implements PublisherBase {
     }
 
     return { objects };
-  }
-
-  private download(containerName: string, blobPath: string): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const fileStreamChunks: Array<any> = [];
-      this.storageClient
-        .getContainerClient(containerName)
-        .getBlockBlobClient(blobPath)
-        .download()
-        .then(res => {
-          const body = res.readableStreamBody;
-          if (!body) {
-            reject(new Error(`Unable to parse the response data`));
-            return;
-          }
-          body
-            .on('error', reject)
-            .on('data', chunk => {
-              fileStreamChunks.push(chunk);
-            })
-            .on('end', () => {
-              resolve(Buffer.concat(fileStreamChunks));
-            });
-        })
-        .catch(reject);
-    });
-  }
-
-  async fetchTechDocsMetadata(
-    entityName: CompoundEntityRef,
-  ): Promise<TechDocsMetadata> {
-    const entityTriplet = `${entityName.namespace}/${entityName.kind}/${entityName.name}`;
-    const entityRootDir = this.legacyPathCasing
-      ? entityTriplet
-      : lowerCaseEntityTriplet(entityTriplet);
-
-    try {
-      const techdocsMetadataJson = await this.download(
-        this.containerName,
-        `${entityRootDir}/techdocs_metadata.json`,
-      );
-      if (!techdocsMetadataJson) {
-        throw new Error(
-          `Unable to parse the techdocs metadata file ${entityRootDir}/techdocs_metadata.json.`,
-        );
-      }
-      const techdocsMetadata = JSON5.parse(
-        techdocsMetadataJson.toString('utf-8'),
-      );
-      return techdocsMetadata;
-    } catch (e) {
-      throw new ForwardedError('TechDocs metadata fetch failed', e);
-    }
-  }
-
-  /**
-   * Express route middleware to serve static files on a route in techdocs-backend.
-   */
-  docsRouter(): express.Handler {
-    return (req, res) => {
-      // Decode and trim the leading forward slash
-      const decodedUri = decodeURI(req.path.replace(/^\//, ''));
-
-      // filePath example - /default/Component/documented-component/index.html
-      const filePath = this.legacyPathCasing
-        ? decodedUri
-        : lowerCaseEntityTripletInStoragePath(decodedUri);
-
-      // Files with different extensions (CSS, HTML) need to be served with different headers
-      const fileExtension = platformPath.extname(filePath);
-      const responseHeaders = getHeadersForFileExtension(fileExtension);
-
-      this.download(this.containerName, filePath)
-        .then(fileContent => {
-          // Inject response headers
-          for (const [headerKey, headerValue] of Object.entries(
-            responseHeaders,
-          )) {
-            res.setHeader(headerKey, headerValue);
-          }
-          res.send(fileContent);
-        })
-        .catch(e => {
-          this.logger.warn(
-            `TechDocs Azure router failed to serve content from container ${this.containerName} at path ${filePath}: ${e.message}`,
-          );
-          res.status(404).send('File Not Found');
-        });
-    };
   }
 
   /**

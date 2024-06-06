@@ -13,10 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-import { Entity, CompoundEntityRef } from '@backstage/catalog-model';
+import { Entity } from '@backstage/catalog-model';
 import { PluginEndpointDiscovery } from '@backstage/backend-common';
 import { Logger } from 'winston';
-import express from 'express';
 
 /**
  * Options for building publishers
@@ -76,19 +75,6 @@ export type ReadinessResponse = {
 };
 
 /**
- * Type to hold metadata found in techdocs_metadata.json and associated with each site
- * @param etag - ETag of the resource used to generate the site. Usually the latest commit sha of the source repository.
- * @public
- */
-export type TechDocsMetadata = {
-  site_name: string;
-  site_description: string;
-  etag: string;
-  build_timestamp: number;
-  files?: string[];
-};
-
-/**
  * TechDocs entity triplet migration request
  * @public
  */
@@ -128,19 +114,6 @@ export interface PublisherBase {
    *                  catalog, and the directory that contains the generated static files from TechDocs.
    */
   publish(request: PublishRequest): Promise<PublishResponse>;
-
-  /**
-   * Retrieve TechDocs Metadata about a site e.g. name, contributors, last updated, etc.
-   * This API uses the techdocs_metadata.json file that co-exists along with the generated docs.
-   */
-  fetchTechDocsMetadata(
-    entityName: CompoundEntityRef,
-  ): Promise<TechDocsMetadata>;
-
-  /**
-   * Route middleware to serve static documentation files for an entity.
-   */
-  docsRouter(): express.Handler;
 
   /**
    * Check if the index.html is present for the Entity at the Storage location.

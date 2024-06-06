@@ -106,11 +106,13 @@ describe('createRouter', () => {
     get: jest.fn(),
   };
   const publisher: jest.Mocked<PublisherBase> = {
-    docsRouter: jest.fn(),
-    fetchTechDocsMetadata: jest.fn(),
     getReadiness: jest.fn(),
     hasDocsBeenGenerated: jest.fn(),
     publish: jest.fn(),
+  };
+  const reader: jest.Mocked<ReaderBase> = {
+    proxyDocs: jest.fn(),
+    fetchTechDocsMetadata: jest.fn(),
   };
   const discovery: jest.Mocked<PluginEndpointDiscovery> = {
     getBaseUrl: jest.fn(),
@@ -126,6 +128,7 @@ describe('createRouter', () => {
     preparers,
     generators,
     publisher,
+    reader,
     config: new ConfigReader({}),
     logger: loggerToWinstonLogger(mockServices.logger.mock()),
     discovery,
@@ -134,6 +137,7 @@ describe('createRouter', () => {
   };
   const recommendedOptions = {
     publisher,
+    reader,
     config: new ConfigReader({}),
     logger: loggerToWinstonLogger(mockServices.logger.mock()),
     discovery,
@@ -146,7 +150,7 @@ describe('createRouter', () => {
   });
 
   beforeEach(async () => {
-    publisher.docsRouter.mockReturnValue(() => {});
+    reader.proxyDocs.mockReturnValue(() => {});
     discovery.getBaseUrl.mockImplementation(async type => {
       return `http://backstage.local/api/${type}`;
     });
@@ -305,7 +309,7 @@ data: {"updated":true}
   describe('GET /static/docs', () => {
     it('should delegate to the publisher handler', async () => {
       const docsRouter = jest.fn((_req, res) => res.sendStatus(200));
-      publisher.docsRouter.mockReturnValue(docsRouter);
+      reader.proxyDocs.mockReturnValue(docsRouter);
 
       const app = await createApp(outOfTheBoxOptions);
 
@@ -337,7 +341,7 @@ data: {"updated":true}
         key === 'permission.enabled' ? true : undefined,
       );
       const docsRouter = jest.fn((_req, res) => res.sendStatus(200));
-      publisher.docsRouter.mockReturnValue(docsRouter);
+      reader.proxyDocs.mockReturnValue(docsRouter);
 
       const app = await createApp(outOfTheBoxOptions);
 

@@ -30,6 +30,7 @@ import {
   PreparerBase,
   Preparers,
   Publisher,
+  Reader,
   RemoteProtocol,
   techdocsBuildsExtensionPoint,
   TechdocsGenerator,
@@ -132,6 +133,17 @@ export const techdocsPlugin = createBackendPlugin({
         // checks if the publisher is working and logs the result
         await publisher.getReadiness();
 
+        // Publisher is used for
+        // 1. Publishing generated files to storage
+        // 2. Fetching files from storage and passing them to TechDocs frontend.
+        const reader = await Reader.fromConfig(config, {
+          logger: winstonLogger,
+          discovery: discovery,
+        });
+
+        // checks if the reader is working and logs the result
+        await reader.getReadiness();
+
         const cacheManager = cacheToPluginCacheManager(cache);
         http.use(
           await createRouter({
@@ -141,6 +153,7 @@ export const techdocsPlugin = createBackendPlugin({
             preparers,
             generators,
             publisher,
+            reader,
             config,
             discovery,
             httpAuth,
